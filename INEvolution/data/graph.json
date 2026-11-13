@@ -1,0 +1,114 @@
+{
+  "version": 2,
+  "tree": [
+    {
+      "id": "g-default",
+      "type": "galaxy",
+      "name": "认知",
+      "parent": null,
+      "color": "#f07542",
+      "x": 146.41,
+      "y": 0.0,
+      "z": -90.42,
+      "md": "galaxies/g-default.md"
+    },
+    {
+      "id": "g-mweti8hg-wtmdi",
+      "type": "galaxy",
+      "name": "能力",
+      "parent": null,
+      "color": "#8e9196",
+      "x": -146.41,
+      "y": 0.0,
+      "z": 90.42,
+      "md": "galaxies/g-mweti8hg-wtmdi.md"
+    },
+    {
+      "id": "语言",
+      "type": "planet",
+      "name": "语言",
+      "parent": "g-default",
+      "color": "#f04242",
+      "x": 285.49,
+      "y": 61.02,
+      "z": 561.5,
+      "md": "planets/语言.md"
+    },
+    {
+      "id": "领域",
+      "type": "planet",
+      "name": "领域",
+      "parent": "g-default",
+      "color": "#8e9196",
+      "x": 145.81,
+      "y": 27.87,
+      "z": 306.59,
+      "md": "planets/领域.md"
+    },
+    {
+      "id": "s-mwewmrmf-sumuu",
+      "type": "sector",
+      "name": "英语",
+      "parent": "语言",
+      "color": "#8e9196",
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "md": "sectors/s-mwewmrmf-sumuu.md"
+    },
+    {
+      "id": "s-mwewn10f-meamw",
+      "type": "sector",
+      "name": "中文",
+      "parent": "语言",
+      "color": "#8e9196",
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "md": "sectors/s-mwewn10f-meamw.md"
+    },
+    {
+      "id": "s-mwewnh1r-i876k",
+      "type": "sector",
+      "name": "日语",
+      "parent": "语言",
+      "color": "#8e9196",
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "md": "sectors/s-mwewnh1r-i876k.md"
+    },
+    {
+      "id": "s-mwewnsqg-kcj6j",
+      "type": "sector",
+      "name": "西语",
+      "parent": "语言",
+      "color": "#8e9196",
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "md": "sectors/s-mwewnsqg-kcj6j.md"
+    },
+    {
+      "id": "s-mwewp6ga-umn6t",
+      "type": "sector",
+      "name": "自然资源",
+      "parent": "领域",
+      "color": "#42f044",
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "md": "sectors/s-mwewp6ga-umn6t.md"
+    }
+  ],
+  "links": [
+    {
+      "source": "g-default",
+      "target": "g-mweti8hg-wtmdi"
+    },
+    {
+      "source": "领域",
+      "target": "语言"
+    }
+  ]
+}
