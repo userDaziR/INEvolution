@@ -993,6 +993,56 @@
     }
     .side-body .editor { max-width: none; margin: 0; padding: 22px 24px 90px; }
     .side-body .editor textarea { min-height: calc(100vh - 170px); }
+    .tb-btn:disabled {
+      opacity: 0.32; cursor: not-allowed; filter: saturate(0.4);
+      box-shadow: none;
+    }
+    .relation-view { padding: 22px 24px 80px; }
+    .relation-summary {
+      border: 1px solid rgba(0, 255, 150, 0.2); border-radius: 9px;
+      background: linear-gradient(180deg, rgba(0, 28, 16, 0.62), rgba(0, 12, 7, 0.42));
+      padding: 14px 16px 12px; margin-bottom: 22px;
+      box-shadow: inset 0 1px 0 rgba(185, 255, 225, 0.05);
+    }
+    .relation-kicker {
+      display: flex; justify-content: space-between; gap: 10px;
+      font-size: 9.5px; letter-spacing: 0.16em; color: #5f9f80;
+      font-family: var(--mono); text-transform: uppercase;
+    }
+    .relation-kicker b { color: var(--matrix); font-weight: 600; }
+    .relation-nodes { display: flex; flex-wrap: wrap; gap: 6px; margin: 11px 0 10px; }
+    .relation-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      max-width: 100%; padding: 3px 9px 3px 7px; border-radius: 999px;
+      border: 1px solid rgba(0, 255, 150, 0.18); background: rgba(0, 20, 11, 0.7);
+      font-size: 11px; color: #d5ffe6; font-family: var(--mono);
+    }
+    .relation-chip .rdot {
+      width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+      box-shadow: 0 0 8px currentColor;
+    }
+    .relation-chip small { color: #6f9a82; font-size: 9px; }
+    .relation-edges {
+      margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(0, 255, 150, 0.12);
+      font-size: 10.5px; color: #9fd2b6; line-height: 1.8; font-family: var(--mono);
+    }
+    .relation-edges .edge { color: #c8ffe0; }
+    .relation-note-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(0, 255, 150, 0.12);
+      color: #8fbfa5; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+      font-family: var(--mono);
+    }
+    .relation-note-head span:last-child { color: #5f8f75; letter-spacing: 0.06em; text-transform: none; }
+    .relation-view .markdown-body { padding: 0 0 40px; font-size: 14.5px; }
+    .relation-view .editor { padding: 0 0 40px; }
+    .relation-view .editor textarea { min-height: calc(100vh - 430px); }
+    .relation-empty {
+      padding: 26px 18px; border: 1px dashed rgba(0, 255, 150, 0.14);
+      border-radius: 8px; color: #6f9a82; font-size: 12px; line-height: 1.9;
+      font-family: var(--mono); text-align: center;
+    }
+    .relation-empty b { color: var(--matrix); font-weight: 600; }
     .side-loading, .side-error {
       padding: 34px 30px; color: #8fbfa5; font-size: 12px; line-height: 1.9;
       font-family: var(--mono);
@@ -1071,13 +1121,14 @@
         <span class="ni-degree" id="niDegree"></span>
       </div>
       <div class="ni-path" id="niPath"></div>
-      <div class="ni-tip" id="niTip">单击聚焦/内容 · 双击进入 · 右键操作 · Del 删除</div>
+      <div class="ni-tip" id="niTip">单击聚焦/内容 · Ctrl 多选 · 双击进入 · Del 删除</div>
     </div>
 
     <div id="legend" class="panel">
       <div class="lg-title"><span>控制台 // SYS</span><span id="fps">— FPS</span></div>
       <div class="lg-row"><kbd>拖拽</kbd> 环绕/旋转 · <kbd>单击</kbd> 聚焦/内容</div>
       <div class="lg-row"><kbd>Shift</kbd>+<kbd>拖拽</kbd> 平移 · <kbd>滚轮</kbd> 缩放</div>
+      <div class="lg-row"><kbd>Ctrl</kbd>+<kbd>单击</kbd> 多选有星链的节点</div>
       <div class="lg-row"><kbd>双击</kbd> 进入下一层 · <kbd>右键</kbd> 内容/菜单 · <kbd>Esc</kbd> 返回</div>
     </div>
 
@@ -1098,6 +1149,7 @@
         <div class="help-row"><span class="keys"><kbd>Shift</kbd><kbd>+</kbd><kbd>拖拽</kbd></span><span>平移视角</span></div>
         <div class="help-row"><span class="keys"><kbd>滚轮</kbd></span><span>推近 / 拉远镜头</span></div>
         <div class="help-row"><span class="keys"><kbd>单击节点</kbd></span><span>聚焦；若已有内容，右侧打开内容面板</span></div>
+        <div class="help-row"><span class="keys"><kbd>Ctrl</kbd><kbd>+</kbd><kbd>单击</kbd></span><span>多选有星链连接的节点；2 个及以上打开「关系」页面</span></div>
         <div class="help-row"><span class="keys"><kbd>双击节点</kbd></span><span>放大进入下一层：星球 → 板块 → 国家 → 城市</span></div>
         <div class="help-row"><span class="keys"><kbd>右键节点</kbd></span><span>编辑内容 / 新建子节点 / 重命名 / 星链 / 删除</span></div>
         <div class="help-row"><span class="keys"><kbd>右键空白</kbd></span><span>新建当前层级节点，或返回上一层</span></div>
@@ -1105,7 +1157,7 @@
         <div class="help-row"><span class="keys"><kbd>Esc</kbd></span><span>关闭内容 → 取消聚焦 → 返回上一层</span></div>
         <div class="help-row"><span class="keys"><kbd>空格</kbd></span><span>开启或暂停自动环绕</span></div>
         <div class="help-row"><span class="keys"><kbd>R</kbd></span><span>重置视角</span></div>
-        <div class="help-foot">层级：星系 → 星球 → 板块 → 国家 → 城市。右键「编辑内容」按类型创建 notes/ 下的 Markdown；树、星链与坐标保存到 data/graph.json。</div>
+        <div class="help-foot">层级：星系 → 星球 → 板块 → 国家 → 城市。右键「编辑内容」按类型创建 notes/ 下的 Markdown；关系笔记保存在 notes/relations/。树、星链与坐标保存到 data/graph.json。</div>
       </div>
     </div>
 

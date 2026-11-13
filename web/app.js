@@ -197,6 +197,9 @@
   let focusNode = null;
   let contextNode = null;
   let linkSource = null;
+  const multiSelection = new Set();
+  let selectionOrder = [];
+  let groupTarget = null;
   const mouse = { x: 0, y: 0, inside: false };
 
   let colorPickerNode = null;
@@ -208,6 +211,9 @@
   let sideOpen = false;
   let sideNodeId = null;
   let sideNode = null;
+  let sideKind = 'node';
+  let relationIds = [];
+  let lastBuiltParentId = undefined;
   const docState = { path: '', name: '', rawContent: '', mode: 'read', type: '' };
 
   let infoNodeId = null;
@@ -535,6 +541,14 @@
     if (!type) {
       currentParentId = null;
     }
+    const parentChanged = lastBuiltParentId !== currentParentId;
+    lastBuiltParentId = currentParentId;
+    if (parentChanged) {
+      if (sideOpen) closeSideDoc(true);
+      multiSelection.clear();
+      selectionOrder = [];
+      groupTarget = null;
+    }
     viewMode = resolveViewMode();
     const viewType = viewNodeType();
     nodes = childrenOf(currentParentId).filter(node => node.type === viewType);
@@ -623,6 +637,21 @@
       autoBtn.classList.toggle('disabled', viewMode === 'flat');
     }
 
+    if (multiSelection.size) {
+      const ids = multiIdsSorted();
+      const stillValid = ids.every(id => nodeMap.has(id)) &&
+        (ids.length < 2 || isSelectionConnected(ids));
+      if (!stillValid) {
+        multiSelection.clear();
+        selectionOrder = [];
+        groupTarget = null;
+        if (sideOpen && sideKind === 'relation') closeSideDoc(true);
+      } else {
+        relationIds = ids;
+        focusSelectionGroup();
+        if (sideOpen && sideKind === 'relation' && docState.mode === 'read') renderRelationDoc();
+      }
+    }
     updateStatus();
     updateSectorPanel();
     updateEmptyState();
@@ -674,6 +703,7 @@
       const childLabel = TYPE_INFO[parent.type].childLabel;
       text = parent.name + ' · ' + nodes.length + ' 个' + childLabel + ' · ' + linkCount + ' 条星链';
     }
+    if (multiSelection.size) text += ' · 已选 ' + multiSelection.size;
     $('graphStatus').textContent = text;
     $('backLevelBtn').classList.toggle('hidden', !parent);
     if (parent) {
@@ -716,6 +746,19 @@
   }
 
   function updateNodeInfo() {
+    if (!hoverNode && !focusNode && multiSelection.size >= 2) {
+      const selected = multiNodesInOrder();
+      const edgeCount = linksAmongIds(multiIdsSorted()).length;
+      $('niName').textContent = '已选择 ' + selected.length + ' 个节点';
+      $('niPath').textContent = '关系 · ' + edgeCount + ' 条星链';
+      $('niDegree').textContent = 'Ctrl 单击增减';
+      $('niTip').textContent = '左侧聚焦所选 · 右侧编辑关系笔记';
+      const dot = $('niDot');
+      dot.style.background = '#7cffd2';
+      dot.style.boxShadow = '0 0 12px #7cffd2';
+      nodeInfoEl.classList.add('show');
+      return;
+    }
     const node = hoverNode || focusNode;
     if (!node) {
       nodeInfoEl.classList.remove('show');
@@ -729,7 +772,7 @@
     $('niName').textContent = node.name;
     $('niPath').textContent = info.label + ' · ' + content;
     $('niDegree').textContent = countLabel;
-    $('niTip').textContent = '单击聚焦 / 内容 · 双击进入 · 右键操作 · Del 删除';
+    $('niTip').textContent = '单击聚焦 / 内容 · Ctrl 多选 · 双击进入 · Del 删除';
     const dot = $('niDot');
     dot.style.background = node.displayColor;
     dot.style.boxShadow = '0 0 12px ' + node.displayColor;
@@ -1460,8 +1503,10 @@
       const alpha = Math.min(a._alpha, b._alpha);
       if (alpha < 0.03) continue;
       const depth = depthAlpha((a.zc + b.zc) * 0.5);
+      const bothSelected = multiSelection.has(link.source) && multiSelection.has(link.target);
       const hot = (focusNode && (link.source === focusNode.id || link.target === focusNode.id)) ||
-                  (hoverNode && (link.source === hoverNode.id || link.target === hoverNode.id));
+                  (hoverNode && (link.source === hoverNode.id || link.target === hoverNode.id)) ||
+                  bothSelected;
       const strength = clamp(0.8 * depth * alpha * (hot ? 1.9 : 1), 0, 1);
       if (strength < 0.02) continue;
       const ax = a.sx, ay = a.sy, bx = b.sx, by = b.sy;
@@ -1580,7 +1625,7 @@
   function drawLabel(node, t) {
     const alpha = node._alpha;
     if (alpha < 0.1 || node.s < 0.3) return;
-    const hot = node === hoverNode || node === focusNode;
+    const hot = node === hoverNode || node === focusNode || multiSelection.has(node.id);
     const isGalaxy = node.type === 'galaxy';
     const fs = clamp((isGalaxy ? 13 : 12) * node.s, 9, 15.5);
     const text = fitLabel(node.name, 220);
@@ -1843,6 +1888,43 @@
     ctx.globalAlpha = 1;
   }
 
+  function drawMultiBadge(x, y, index, scale) {
+    if (!index) return;
+    const r = 9 * (scale || 1);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fillStyle = 'rgba(2, 20, 13, 0.95)';
+    ctx.fill();
+    ctx.strokeStyle = '#8dffdf';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = '#eafff5';
+    ctx.font = '700 ' + (10 * (scale || 1)).toFixed(1) + 'px ' + MONO_CANVAS;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(index), x, y + 0.5);
+  }
+
+  function drawMultiRing(node, t) {
+    const index = selectionBadgeIndex(node);
+    if (!index) return;
+    const r = Math.max(node._r + 7, 13);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = 'rgba(150,255,228,0.9)';
+    ctx.lineWidth = 1.35;
+    ctx.setLineDash([4, 6]);
+    ctx.lineDashOffset = -(t * 26 + index * 7);
+    ctx.beginPath();
+    ctx.arc(node.sx, node.sy, r, 0, TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
+    ctx.globalCompositeOperation = 'source-over';
+    drawMultiBadge(node.sx + r * 0.72, node.sy - r * 0.72, index, 1);
+  }
+
   function drawNodes(t) {
     const sorted = nodes.slice().sort((a, b) => b.zc - a.zc);
     for (const node of sorted) {
@@ -1851,10 +1933,12 @@
       if (alpha <= 0.015) continue;
       const r = node._r;
       if (r <= 0.25) continue;
-      const hot = node === hoverNode || node === focusNode;
+      const selected = multiSelection.has(node.id);
+      const hot = node === hoverNode || node === focusNode || selected;
       if (node.type === 'galaxy') drawGalaxyNode(node, t, hot, alpha, r, node.sx, node.sy);
       else if (node.type === 'planet') drawPlanetNode(node, t, hot, alpha, r, node.sx, node.sy);
       else drawSolidNode(node, t, hot, alpha, r, node.sx, node.sy);
+      if (selected) drawMultiRing(node, t);
       drawLabel(node, t);
     }
     ctx.globalAlpha = 1;
@@ -1943,11 +2027,16 @@
       ctx.lineWidth = 1.4;
       ctx.setLineDash([5, 9]);
       ctx.lineDashOffset = -(t * 50 + (link.seed || 0) * 40);
+      const bothSelected = multiSelection.has(link.source) && multiSelection.has(link.target);
+      if (bothSelected) {
+        ctx.strokeStyle = 'rgba(215,255,240,0.9)';
+        ctx.lineWidth = 2;
+      }
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
-      ctx.strokeStyle = 'rgba(0,255,150,0.24)';
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = bothSelected ? 'rgba(0,255,150,0.5)' : 'rgba(0,255,150,0.24)';
+      ctx.lineWidth = bothSelected ? 6 : 4;
       ctx.stroke();
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -2152,7 +2241,7 @@
     const sorted = nodes.slice().sort((a, b) => (b.zc || 0) - (a.zc || 0));
     for (const node of sorted) {
       if (!node._visible || !node._patch) continue;
-      drawPatchCells(node, t, node === hoverNode || node === focusNode);
+      drawPatchCells(node, t, node === hoverNode || node === focusNode || multiSelection.has(node.id));
     }
     // Re-add the Gaussian splat sheen over the sector fills so the sphere keeps
     // its soft volumetric texture instead of looking like a flat segmented ball.
@@ -2165,7 +2254,11 @@
     drawSphereShading(cx, cy, screenR);
     drawSectorLinks(t);
     for (const node of sorted) {
-      drawPatchLabel(node, t, node === hoverNode || node === focusNode);
+      drawPatchLabel(node, t, node === hoverNode || node === focusNode || multiSelection.has(node.id));
+    }
+    for (const node of sorted) {
+      if (!multiSelection.has(node.id) || !node._labelVisible) continue;
+      drawMultiBadge(node._labelX + 20, node._labelY - 25, selectionBadgeIndex(node), 0.9);
     }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -2275,10 +2368,193 @@
   }
 
   // ============================================================
+  // Ctrl multi-selection
+  // ============================================================
+  function multiIdsSorted() {
+    return Array.from(multiSelection).sort();
+  }
+
+  function multiNodesInOrder() {
+    const ordered = selectionOrder.filter(id => multiSelection.has(id));
+    for (const id of multiSelection) if (!ordered.includes(id)) ordered.push(id);
+    return ordered.map(id => nodeMap.get(id)).filter(Boolean);
+  }
+
+  function linksAmongIds(ids) {
+    const set = new Set(ids);
+    return links.filter(link => set.has(link.source) && set.has(link.target));
+  }
+
+  function isSelectionConnected(ids) {
+    if (ids.length <= 1) return true;
+    const set = new Set(ids);
+    const adjacency = new Map(ids.map(id => [id, []]));
+    for (const link of links) {
+      if (!set.has(link.source) || !set.has(link.target)) continue;
+      adjacency.get(link.source).push(link.target);
+      adjacency.get(link.target).push(link.source);
+    }
+    const seen = new Set([ids[0]]);
+    const queue = [ids[0]];
+    while (queue.length) {
+      const current = queue.shift();
+      for (const next of adjacency.get(current) || []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    return seen.size === ids.length;
+  }
+
+  function nodeLinkedToSelection(node) {
+    return links.some(link =>
+      (link.source === node.id && multiSelection.has(link.target)) ||
+      (link.target === node.id && multiSelection.has(link.source))
+    );
+  }
+
+  function nodeHasAnyLink(node) {
+    return links.some(link => link.source === node.id || link.target === node.id);
+  }
+
+  function selectionBadgeIndex(node) {
+    const index = selectionOrder.indexOf(node.id);
+    return index >= 0 ? index + 1 : 0;
+  }
+
+  function focusSelectionGroup() {
+    const selected = multiNodesInOrder();
+    if (!selected.length) {
+      groupTarget = null;
+      focusNode = null;
+      cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
+      cam.goalZoom = 1;
+      updateNodeInfo();
+      updateStatus();
+      updateCursor();
+      return;
+    }
+    if (selected.length === 1) {
+      const node = selected[0];
+      groupTarget = null;
+      focusNode = node;
+      if (viewMode === 'sphere') {
+        globe.auto = false;
+        $('autoBtn').classList.toggle('active', false);
+        cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
+        cam.goalZoom = Math.min(cam.zoom, 1.04);
+      } else {
+        cam.goalTarget.x = node.x; cam.goalTarget.y = node.y; cam.goalTarget.z = node.z;
+        cam.goalZoom = Math.min(cam.zoom, viewMode === 'flat' ? 1.15 : 1.18);
+      }
+      updateNodeInfo();
+      updateStatus();
+      updateCursor();
+      return;
+    }
+
+    focusNode = null;
+    if (viewMode === 'sphere') {
+      groupTarget = { x: 0, y: 0, z: 0 };
+      cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
+      cam.goalZoom = Math.max(cam.zoom, 1.08);
+      globe.auto = false;
+      $('autoBtn').classList.toggle('active', false);
+    } else {
+      let cx = 0, cy = 0, cz = 0;
+      for (const node of selected) { cx += node.x; cy += node.y; cz += node.z; }
+      cx /= selected.length; cy /= selected.length; cz /= selected.length;
+      let maxDistance = 80;
+      for (const node of selected) {
+        maxDistance = Math.max(maxDistance, Math.hypot(node.x - cx, node.y - cy, node.z - cz) + node.radius);
+      }
+      groupTarget = { x: cx, y: cy, z: cz };
+      cam.goalTarget.x = cx; cam.goalTarget.y = cy; cam.goalTarget.z = cz;
+      const fit = Math.min(W, H) * 0.32;
+      cam.goalZoom = clamp(fit / Math.max(90, maxDistance), 0.92, 1.75);
+    }
+    updateNodeInfo();
+    updateStatus();
+    updateCursor();
+  }
+
+  function clearMultiSelection(forceClose) {
+    if (sideOpen && sideKind === 'relation') {
+      if (!closeSideDoc(!!forceClose)) return false;
+    }
+    multiSelection.clear();
+    selectionOrder = [];
+    groupTarget = null;
+    focusNode = null;
+    cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
+    cam.goalZoom = 1;
+    if (viewMode === 'sphere') {
+      globe.auto = true;
+      $('autoBtn').classList.toggle('active', true);
+    }
+    updateNodeInfo();
+    updateStatus();
+    updateCursor();
+    return true;
+  }
+
+  function handleCtrlSelect(node) {
+    if (!node || !nodeMap.has(node.id) || transition) return;
+    const already = multiSelection.has(node.id);
+
+    // Validate before touching any open editor, so a blocked Ctrl-click never
+    // closes a dirty relation or node note.
+    if (already) {
+      const next = Array.from(multiSelection).filter(id => id !== node.id);
+      if (next.length >= 2 && !isSelectionConnected(next)) {
+        showHint('取消该节点会让关系断开，请先取消其他节点');
+        return;
+      }
+    } else if (!multiSelection.size) {
+      if (!nodeHasAnyLink(node)) {
+        showHint('该节点没有星链，无法加入关系选择');
+        return;
+      }
+    } else if (!nodeLinkedToSelection(node)) {
+      showHint('只能多选与已选节点存在星链连接的节点');
+      return;
+    }
+
+    if (sideOpen) {
+      if (sideDirty() && !confirm('当前内容有未保存的修改，切换关系选择将丢失，继续吗？')) return;
+      if (!closeSideDoc(true)) return;
+    }
+
+    if (already) {
+      multiSelection.delete(node.id);
+      selectionOrder = selectionOrder.filter(id => id !== node.id);
+    } else {
+      multiSelection.add(node.id);
+      if (!selectionOrder.includes(node.id)) selectionOrder.push(node.id);
+    }
+
+    if (multiSelection.size >= 2) {
+      openRelationPanel();
+      focusSelectionGroup();
+      showHint('已选择 ' + multiSelection.size + ' 个节点 · 关系页面已更新');
+    } else if (multiSelection.size === 1) {
+      focusSelectionGroup();
+      showHint('已选择 1 个节点，继续 Ctrl 单击有星链的节点');
+    } else {
+      clearMultiSelection(true);
+      showHint('已取消关系选择');
+    }
+  }
+
+  // ============================================================
   // Focus
   // ============================================================
   function focusOnNode(node, fromHash) {
     if (!node) return;
+    if (multiSelection.size) {
+      if (!clearMultiSelection(false)) return;
+    }
     if (sideOpen && sideNodeId !== node.id) {
       if (!closeSideDoc(false)) return;
     }
@@ -2288,7 +2564,8 @@
       $('autoBtn').classList.toggle('active', false);
       cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
       cam.goalZoom = Math.max(cam.zoom, 1.06);
-    } else {      cam.goalTarget.x = node.x;
+    } else {
+      cam.goalTarget.x = node.x;
       cam.goalTarget.y = node.y;
       cam.goalTarget.z = node.z;
       cam.goalZoom = Math.max(cam.zoom, viewMode === 'flat' ? 1.35 : 1.6);
@@ -2302,21 +2579,29 @@
 
   function unfocusNode(forceClose) {
     focusNode = null;
+    multiSelection.clear();
+    selectionOrder = [];
+    groupTarget = null;
     globe.auto = true;
     if (viewMode === 'sphere') $('autoBtn').classList.toggle('active', true);
     cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
     cam.goalZoom = 1;
     updateNodeInfo();
+    updateStatus();
     if (forceClose !== false) closeSideDoc(true);
   }
 
   function clearGraphFocus() {
     focusNode = null;
     hoverNode = null;
+    multiSelection.clear();
+    selectionOrder = [];
+    groupTarget = null;
     globe.auto = true;
     cam.goalTarget.x = 0; cam.goalTarget.y = 0; cam.goalTarget.z = 0;
     cam.goalZoom = 1;
     updateNodeInfo();
+    updateStatus();
     updateCursor();
   }
 
@@ -2335,6 +2620,7 @@
   function enterNode(node) {
     if (!node || transition) return;
     cancelPendingClick();
+    if (multiSelection.size && !clearMultiSelection(false)) return;
     const info = TYPE_INFO[node.type];
     if (!info.child) {
       if (nodeHasMd(node)) {
@@ -2378,6 +2664,7 @@
   function goUp() {
     if (!currentParentId || transition) return;
     cancelPendingClick();
+    if (multiSelection.size && !clearMultiSelection(false)) return;
     if (sideOpen && !closeSideDoc(false)) return;
     const parent = viewParent();
     if (!parent) return;
@@ -2474,6 +2761,7 @@
   }
 
   function resetView() {
+    if (multiSelection.size && !clearMultiSelection(false)) return;
     if (sideOpen && !closeSideDoc(false)) return;
     focusNode = null;
     hoverNode = null;
@@ -2555,10 +2843,15 @@
     pendingClickNode = null;
   }
 
-  function queueNodeClick(node) {
+  function queueNodeClick(node, ctrlKey) {
     lastPointerNode = node;
     lastPointerAt = performance.now();
     cancelPendingClick();
+    if (ctrlKey) {
+      handleCtrlSelect(node);
+      return;
+    }
+    if (multiSelection.size && !clearMultiSelection(false)) return;
     pendingClickNode = node;
     pendingClickTimer = setTimeout(() => {
       pendingClickTimer = null;
@@ -2659,9 +2952,10 @@
     updateCursor();
   });
 
-  function endPointer() {
+  function endPointer(e) {
+    const ctrlKey = !!(e && (e.ctrlKey || e.metaKey));
     if (mode === 'dragNode' && dragNode) {
-      if (!movedSinceDown) queueNodeClick(dragNode);
+      if (!movedSinceDown) queueNodeClick(dragNode, ctrlKey);
       else {
         dragNode.z = viewMode === 'flat' ? 0 : dragNode.z;
         scheduleMetaSave(700);
@@ -2669,16 +2963,23 @@
     } else if (mode === 'globe') {
       globe.dragging = false;
       if (!movedSinceDown) {
-        if (downNode) queueNodeClick(downNode);
+        if (downNode) queueNodeClick(downNode, ctrlKey);
         else {
           lastPointerNode = null;
-          if (sideOpen && !closeSideDoc(false)) { /* cancelled */ }
-          else unfocusNode(false);
+          if (multiSelection.size) {
+            if (clearMultiSelection(false)) unfocusNode(false);
+          } else if (sideOpen && !closeSideDoc(false)) {
+            // keep the current view when the user cancels closing
+          } else {
+            unfocusNode(false);
+          }
         }
       }
     } else if ((mode === 'orbit' || mode === 'pan') && !movedSinceDown) {
       lastPointerNode = null;
-      if (sideOpen && !closeSideDoc(false)) {
+      if (multiSelection.size) {
+        if (clearMultiSelection(false)) unfocusNode(false);
+      } else if (sideOpen && !closeSideDoc(false)) {
         // keep focus if the user cancelled
       } else {
         unfocusNode(false);
@@ -2706,12 +3007,14 @@
 
   canvas.addEventListener('dblclick', (e) => {
     if (transition) return;
+    if (e.ctrlKey || e.metaKey) return;
     cancelPendingClick();
     let node = nodeAt(e.clientX, e.clientY);
     if (!node && lastPointerNode && performance.now() - lastPointerAt < 700) {
       node = lastPointerNode;
     }
     if (!node) return;
+    if (multiSelection.size && !clearMultiSelection(false)) return;
     if (node.type === 'city') {
       if (nodeHasMd(node)) {
         focusOnNode(node);
@@ -2951,6 +3254,17 @@
       if (a) a.degree++;
       if (b) b.degree++;
     }
+    if (multiSelection.size >= 2) {
+      const ids = multiIdsSorted();
+      if (!ids.every(id => nodeMap.has(id)) || !isSelectionConnected(ids)) {
+        clearMultiSelection(true);
+        showHint('星链变化使关系断开，已取消多选');
+      } else {
+        relationIds = ids;
+        focusSelectionGroup();
+        if (sideOpen && sideKind === 'relation' && docState.mode === 'read') renderRelationDoc();
+      }
+    }
     updateStatus();
     updateNodeInfo();
   }
@@ -3063,6 +3377,7 @@
     }
     if (!confirm('确定删除' + TYPE_INFO[node.type].label + '「' + node.name + '」' +
       (nodeHasMd(node) ? '及其 Markdown 内容吗？' : '吗？'))) return;
+    if (multiSelection.has(node.id)) clearMultiSelection(true);
     if (nodeHasMd(node)) {
       try {
         await deleteContent(canonicalMd(node));
@@ -3089,6 +3404,7 @@
   function movePlanet(planet, galaxyId) {
     const galaxy = nodeById.get(galaxyId);
     if (!galaxy || galaxy.type !== 'galaxy' || planet.type !== 'planet') return;
+    if (multiSelection.has(planet.id)) clearMultiSelection(true);
     planet.parent = galaxyId;
     buildIndex();
     buildView(false, false);
@@ -3291,6 +3607,230 @@
     requestAnimationFrame(resizeCanvas);
   }
 
+  // ============================================================
+  // Relation page (multi-selected connected nodes)
+  // ============================================================
+  function relationHash(ids) {
+    const source = ids.join('|');
+    let h1 = 2166136261 >>> 0;
+    let h2 = 0x9e3779b9 >>> 0;
+    for (let i = 0; i < source.length; i++) {
+      const code = source.charCodeAt(i);
+      h1 = Math.imul(h1 ^ code, 16777619) >>> 0;
+      h2 = Math.imul(h2 ^ (code + 0x9e3779b9), 2246822519) >>> 0;
+    }
+    return h1.toString(36).padStart(7, '0') + h2.toString(36).padStart(7, '0');
+  }
+
+  function relationPathFor(ids) {
+    const sorted = ids.slice().sort();
+    return 'relations/r-' + relationHash(sorted) + '-' + sorted.length + '.md';
+  }
+
+  function relationOrderedNodes(ids) {
+    const ordered = selectionOrder.filter(id => ids.includes(id));
+    for (const id of ids) if (!ordered.includes(id)) ordered.push(id);
+    return ordered.map(id => nodeById.get(id)).filter(Boolean);
+  }
+
+  function relationTitle(ids) {
+    return relationOrderedNodes(ids).map(node => node.name).join(' ⇄ ');
+  }
+
+  function relationEdges(ids) {
+    const idSet = new Set(ids);
+    return links.filter(link => idSet.has(link.source) && idSet.has(link.target));
+  }
+
+  function relationSummaryHTML(ids) {
+    const selected = relationOrderedNodes(ids);
+    const edges = relationEdges(ids);
+    const chips = selected.map(node => {
+      const color = node.displayColor || paletteFor(node.type, node.id);
+      return '<span class="relation-chip">' +
+        '<i class="rdot" style="background:' + color + ';color:' + color + '"></i>' +
+        escapeHtml(node.name) + ' <small>' + (TYPE_INFO[node.type] ? TYPE_INFO[node.type].label : node.type) + '</small>' +
+        '</span>';
+    }).join('');
+    const edgeRows = edges.map(link => {
+      const a = nodeById.get(link.source);
+      const b = nodeById.get(link.target);
+      return '<div class="edge">' + escapeHtml(a ? a.name : link.source) +
+        ' <span style="color:#00ff9c;">⇄</span> ' +
+        escapeHtml(b ? b.name : link.target) + '</div>';
+    }).join('');
+    return '<div class="relation-summary">' +
+      '<div class="relation-kicker"><span>RELATION // 关系</span><b>' +
+      selected.length + ' 节点 · ' + edges.length + ' 星链</b></div>' +
+      '<div class="relation-nodes">' + chips + '</div>' +
+      '<div class="relation-edges">' + (edgeRows || '<span style="color:#6f9a82;">暂无星链</span>') + '</div>' +
+      '</div>';
+  }
+
+  function relationTemplate(ids) {
+    const selected = relationOrderedNodes(ids);
+    const edges = relationEdges(ids);
+    const title = selected.map(node => node.name).join(' ⇄ ');
+    let text = '# 关系：' + title + '\n\n';
+    text += '## 节点\n\n';
+    for (const node of selected) {
+      text += '- **' + node.name + '**（' + (TYPE_INFO[node.type] ? TYPE_INFO[node.type].label : node.type) + '）\n';
+    }
+    text += '\n## 星链\n\n';
+    for (const link of edges) {
+      const a = nodeById.get(link.source);
+      const b = nodeById.get(link.target);
+      text += '- ' + (a ? a.name : link.source) + ' ⇄ ' + (b ? b.name : link.target) + '\n';
+    }
+    text += '\n## 关系说明\n\n';
+    return text;
+  }
+
+  function renderRelationDoc() {
+    if (!sideOpen || sideKind !== 'relation') return;
+    const ids = relationIds;
+    const hasNote = mdSet.has(docState.path);
+    const readMode = docState.mode === 'read';
+    sideTitle.textContent = relationTitle(ids);
+    sideType.textContent = '关系内容 · ' + ids.length + ' 个节点';
+    sidePath.textContent = 'notes/' + docState.path;
+    sideEdit.textContent = readMode ? '修改' : '保存';
+    sideStatus.textContent = readMode ? (hasNote ? '只读模式' : '仅关系结构') : '编辑模式';
+    sideDelete.disabled = !hasNote;
+    sideDelete.title = hasNote ? '删除关系笔记（节点与星链保留）' : '暂无关系笔记';
+    const summary = relationSummaryHTML(ids);
+    const head = '<div class="relation-note-head"><span>关系笔记</span><span>' +
+      (hasNote ? '已创建' : '未创建') + '</span></div>';
+    if (readMode) {
+      let note;
+      if (docState.rawContent && docState.rawContent.trim()) {
+        note = '<div class="markdown-body">' + renderMarkdown(docState.rawContent) + '</div>';
+      } else {
+        note = '<div class="relation-empty">暂无关系笔记。<b>点击「修改」</b> 创建，可记录这组节点之间的关系。<br>' +
+          '删除按钮只删除关系笔记，节点与星链都会保留。</div>';
+      }
+      sideBody.innerHTML = '<div class="relation-view">' + summary +
+        '<div class="relation-note">' + head + note + '</div></div>';
+      sideBody.scrollTop = 0;
+    } else {
+      sideBody.innerHTML = '<div class="relation-view">' + summary +
+        '<div class="relation-note">' + head +
+        '<div class="editor"><textarea id="sideEditor" spellcheck="false"></textarea></div>' +
+        '</div></div>';
+      const editor = $('sideEditor');
+      editor.value = docState.rawContent;
+      editor.addEventListener('input', () => {
+        editor.style.height = 'auto';
+        editor.style.height = Math.max(window.innerHeight - 430, editor.scrollHeight) + 'px';
+      });
+      setTimeout(() => {
+        editor.style.height = Math.max(window.innerHeight - 430, editor.scrollHeight) + 'px';
+        editor.focus();
+      }, 0);
+      sideBody.scrollTop = 0;
+    }
+  }
+
+  function openRelationPanel() {
+    if (multiSelection.size < 2) return false;
+    if (sideOpen && !closeSideDoc(false)) return false;
+    const ids = multiIdsSorted();
+    const path = relationPathFor(ids);
+    const token = ++sideLoadToken;
+    sideOpen = true;
+    sideKind = 'relation';
+    sideNodeId = null;
+    sideNode = null;
+    relationIds = ids;
+    docState.path = path;
+    docState.name = relationTitle(ids);
+    docState.type = 'relation';
+    docState.rawContent = '';
+    docState.mode = 'read';
+    sideTitle.textContent = relationTitle(ids);
+    sideType.textContent = '关系内容 · ' + ids.length + ' 个节点';
+    sidePath.textContent = 'notes/' + path;
+    sideStatus.textContent = mdSet.has(path) ? '加载中…' : '仅关系结构';
+    sideEdit.textContent = '修改';
+    sideDelete.disabled = !mdSet.has(path);
+    sideDelete.title = mdSet.has(path) ? '删除关系笔记（节点与星链保留）' : '暂无关系笔记';
+    sideBody.innerHTML = '<div class="side-loading"><span class="spinner small"></span>正在构建关系页面…</div>';
+    setSplit(true);
+    if (!mdSet.has(path)) {
+      renderRelationDoc();
+      return true;
+    }
+    loadContent(path).then(res => {
+      if (token !== sideLoadToken || !sideOpen || sideKind !== 'relation' || docState.path !== path) return;
+      if (!res || res.ok === false) throw new Error((res && res.error) || '读取失败');
+      docState.rawContent = res.content || '';
+      renderRelationDoc();
+    }).catch(error => {
+      if (token !== sideLoadToken || !sideOpen || sideKind !== 'relation') return;
+      sideStatus.textContent = '读取失败';
+      sideBody.innerHTML = '<div class="side-error">无法读取关系笔记 <code>' + escapeHtml(path) + '</code><br>' +
+        escapeHtml(error.message || '') + '</div>';
+    });
+    return true;
+  }
+
+  async function ensureRelationEdit() {
+    if (!sideOpen || sideKind !== 'relation') return;
+    if (mdSet.has(docState.path)) {
+      docState.mode = 'edit';
+      renderRelationDoc();
+      return;
+    }
+    const path = docState.path;
+    const ids = relationIds.slice();
+    const template = relationTemplate(ids);
+    try {
+      await createContent(path, template);
+      mdSet.add(path);
+      if (!sideOpen || sideKind !== 'relation' || docState.path !== path) return;
+      docState.rawContent = template;
+      docState.mode = 'edit';
+      renderRelationDoc();
+      showHint('已创建关系笔记 notes/' + path);
+    } catch (error) {
+      if (error.status === 409) {
+        mdSet.add(path);
+        try {
+          const res = await loadContent(path);
+          if (!sideOpen || sideKind !== 'relation' || docState.path !== path) return;
+          docState.rawContent = (res && res.content) || '';
+          docState.mode = 'edit';
+          renderRelationDoc();
+        } catch (loadError) {
+          alert('读取关系笔记失败：' + loadError.message);
+        }
+      } else {
+        alert('创建关系笔记失败：' + error.message);
+      }
+    }
+  }
+
+  async function deleteRelationNote() {
+    if (!sideOpen || sideKind !== 'relation') return;
+    if (!mdSet.has(docState.path)) return;
+    const path = docState.path;
+    if (!confirm('删除关系笔记 notes/' + path + ' ？\n\n只会删除这份关系笔记，节点与星链都会保留。')) return;
+    try {
+      await deleteContent(path);
+    } catch (error) {
+      if (error.status !== 404) {
+        alert('删除关系笔记失败：' + error.message);
+        return;
+      }
+    }
+    if (!sideOpen || sideKind !== 'relation' || docState.path !== path) return;
+    mdSet.delete(path);
+    docState.rawContent = '';
+    docState.mode = 'read';
+    renderRelationDoc();
+    showHint('关系笔记已删除，节点与星链仍然保留');
+  }
+
   function openSideDoc(node, editMode) {
     if (!node) return;
     if (sideOpen && sideNodeId === node.id) {
@@ -3305,6 +3845,8 @@
     }
     const path = canonicalMd(node);
     sideOpen = true;
+    sideKind = 'node';
+    relationIds = [];
     sideNodeId = node.id;
     sideNode = node;
     docState.path = path;
@@ -3318,6 +3860,8 @@
     sidePath.textContent = 'notes/' + path;
     sideStatus.textContent = '加载中…';
     sideEdit.textContent = docState.mode === 'edit' ? '保存' : '编辑';
+    sideDelete.disabled = false;
+    sideDelete.title = '删除对应的 Markdown 内容文件';
     sideBody.innerHTML = '<div class="side-loading"><span class="spinner small"></span>正在读取 ' + escapeHtml(path) + '…</div>';
     setSplit(true);
     loadContent(path).then(res => {
@@ -3345,6 +3889,8 @@
     }
     sideLoadToken++;
     sideOpen = false;
+    sideKind = 'node';
+    relationIds = [];
     sideNodeId = null;
     sideNode = null;
     docState.mode = 'read';
@@ -3353,16 +3899,24 @@
     sideBody.innerHTML = '';
     sideStatus.textContent = '';
     sideEdit.textContent = '编辑';
+    sideDelete.disabled = false;
+    sideDelete.title = '删除对应的 Markdown 内容文件';
     setSplit(false);
     return true;
   }
 
   function renderSideDoc() {
     if (!sideOpen) return;
+    if (sideKind === 'relation') {
+      renderRelationDoc();
+      return;
+    }
     const readMode = docState.mode === 'read';
     sideEdit.textContent = readMode ? '编辑' : '保存';
     sideStatus.textContent = readMode ? '只读模式' : '编辑模式';
     sidePath.textContent = 'notes/' + docState.path;
+    sideDelete.disabled = false;
+    sideDelete.title = '删除对应的 Markdown 内容文件';
     if (readMode) {
       if (!docState.rawContent || !docState.rawContent.trim()) {
         sideBody.innerHTML = '<div class="markdown-body"><div class="doc-empty">此节点还没有内容，点击「编辑」开始写。</div></div>';
@@ -3405,6 +3959,10 @@
   }
 
   async function deleteSideContent() {
+    if (sideKind === 'relation') {
+      await deleteRelationNote();
+      return;
+    }
     if (!sideOpen || !docState.path) return;
     const path = docState.path;
     const node = sideNode;
@@ -3454,6 +4012,11 @@
 
   $('sideEdit').addEventListener('click', () => {
     if (!sideOpen) return;
+    if (sideKind === 'relation') {
+      if (docState.mode === 'read') ensureRelationEdit();
+      else saveSideDoc();
+      return;
+    }
     if (docState.mode === 'read') {
       docState.mode = 'edit';
       renderSideDoc();
@@ -3463,7 +4026,9 @@
   });
   $('sideDelete').addEventListener('click', deleteSideContent);
   $('sideClose').addEventListener('click', () => {
-    closeSideDoc(false);
+    const wasRelation = sideKind === 'relation';
+    if (!closeSideDoc(false)) return;
+    if (wasRelation) clearMultiSelection(true);
   });
 
   // ============================================================
@@ -3482,7 +4047,15 @@
       if (menuEl.style.display === 'block') { menuEl.style.display = 'none'; return; }
       if (linkSource) { cancelLinking(); return; }
       if (sideOpen) {
-        if (closeSideDoc(false)) unfocusNode(false);
+        const wasRelation = sideKind === 'relation';
+        if (closeSideDoc(false)) {
+          if (wasRelation) clearMultiSelection(true);
+          else unfocusNode(false);
+        }
+        return;
+      }
+      if (multiSelection.size) {
+        if (clearMultiSelection(false)) unfocusNode(false);
         return;
       }
       if (focusNode) { unfocusNode(true); return; }
@@ -3674,6 +4247,7 @@
 
   async function refreshAll(fromUser) {
     if (transition) return;
+    if (multiSelection.size && !clearMultiSelection(false)) return;
     if (sideOpen && !closeSideDoc(false)) return;
     hideMenus();
     cancelLinking();

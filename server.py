@@ -223,7 +223,7 @@ def sanitize_links(raw_links):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'INEvolution/0.4.1'
+    server_version = 'INEvolution/0.5.0'
 
     def log_message(self, format, *args):
         # Keep the console clean; uncomment for request debugging.
